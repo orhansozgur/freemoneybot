@@ -24,7 +24,7 @@ jobs:
       - name: Run strategy
         env:
           GMAIL_APP_PASS: ${{ secrets.GMAIL_APP_PASS }}
-        run: python realtime_strategy.py
+        run: python real_money_generator.py
 
       - name: Save updated open_trades.csv
         uses: actions/upload-artifact@v4
