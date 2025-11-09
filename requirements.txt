@@ -2,3 +2,4 @@ yfinance
 pandas
 polars
 numpy
+pyarrow
