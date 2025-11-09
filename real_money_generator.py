@@ -8,14 +8,20 @@ from pathlib import Path
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import os
 
 # ---------------- EMAIL SETTINGS ----------------
 EMAIL_SENDER = "orhansozgur@gmail.com"
-EMAIL_PASSWORD = "xlke xrbv udvl qjlf"   # generated in Gmail security
+EMAIL_PASSWORD = os.getenv("GMAIL_APP_PASS")
 EMAIL_RECEIVER = "orhansozgur@gmail.com"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
+if not EMAIL_PASSWORD:
+    raise RuntimeError(
+        "Missing email password. Set GMAIL_APP_PASS env var, store in keyring, or use dotenv."
+    )
+    
 def send_email(subject, html_body):
     """Send an HTML email via Gmail SMTP."""
     msg = MIMEMultipart("alternative")
