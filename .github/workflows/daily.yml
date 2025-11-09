@@ -1,0 +1,33 @@
+name: Daily Strategy Run
+
+on:
+  schedule:
+    - cron: "0 9 * * *"   # runs every day at 09:00 UTC
+  workflow_dispatch:       # allows manual runs
+
+jobs:
+  run-strategy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run strategy
+        env:
+          GMAIL_APP_PASS: ${{ secrets.GMAIL_APP_PASS }}
+        run: python realtime_strategy.py
+
+      - name: Save updated open_trades.csv
+        uses: actions/upload-artifact@v4
+        with:
+          name: open_trades
+          path: open_trades.csv
