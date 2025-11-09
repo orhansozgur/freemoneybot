@@ -13,7 +13,7 @@ import os
 # ---------------- EMAIL SETTINGS ----------------
 EMAIL_SENDER = "orhansozgur@gmail.com"
 EMAIL_PASSWORD = os.getenv("GMAIL_APP_PASS")
-EMAIL_RECEIVER = "orhansozgur@gmail.com"
+EMAIL_RECEIVERS = ["orhansozgur@gmail.com", "eminozgur@gmail.com"]
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
@@ -26,7 +26,7 @@ def send_email(subject, html_body):
     """Send an HTML email via Gmail SMTP."""
     msg = MIMEMultipart("alternative")
     msg["From"] = EMAIL_SENDER
-    msg["To"] = EMAIL_RECEIVER
+    msg["To"] = ", ".join(EMAIL_RECEIVERS)
     msg["Subject"] = subject
     msg.attach(MIMEText(html_body, "html"))
 
@@ -34,7 +34,7 @@ def send_email(subject, html_body):
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
             server.starttls()
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            server.send_message(msg)
+            server.sendmail(EMAIL_SENDER, EMAIL_RECEIVERS, msg.as_string())
         print("📧 Email sent successfully.")
     except Exception as e:
         print(f"⚠️ Failed to send email: {e}")
