@@ -331,7 +331,7 @@ for sym, p in params.items():
         today = today.replace(tzinfo=None)
     price = last["Close"].item()
 
-    roll_peak_val = df["Close"].tail(20).max()
+    roll_peak_val = df["Close"].tail(160).max()
     # handle both float and Series cases
     if isinstance(roll_peak_val, pl.Series):
         roll_peak = roll_peak_val.item()
