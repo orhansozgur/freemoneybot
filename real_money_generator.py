@@ -355,7 +355,7 @@ for sym, p in params.items():
     existing = open_trades.filter(pl.col("Ticker") == sym)
     if existing.height == 0:
         calm_val = bool(last["vol"].item() <= vol_mean * vol_mult)
-        recent_dd_val = df.tail(20)["drawdown"].min()
+        recent_dd_val = df.tail(160)["drawdown"].min()
         if isinstance(recent_dd_val, pl.Series):
             recent_dd_val = recent_dd_val.item()
 
