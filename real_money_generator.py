@@ -289,8 +289,8 @@ def save_open_trades(df):
 
 def get_vol_and_dd(df):
     close = df["Close"].to_numpy()
-    roll_peak_20 = np.array([np.max(close[max(0, i - 20):i + 1]) for i in range(len(close))])
-    drawdown = close / roll_peak_20 - 1.0
+    roll_peak_160 = np.array([np.max(close[max(0, i - 160):i + 1]) for i in range(len(close))])
+    drawdown = close / roll_peak_160 - 1.0
     ret = np.diff(close, prepend=close[0]) / close
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
