@@ -10,16 +10,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repo (fresh)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # full history (safer for some git ops)
+          clean: true         # remove any previous build leftovers
+
+      - name: Show commit that is running
+        run: |
+          echo "Running on commit:"
+          git log -1 --oneline
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
+      # optional: nuke pip cache if you're paranoid about staleness
+      # - name: Clear pip cache
+      #   run: pip cache purge || true
+
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Run strategy
         env:
