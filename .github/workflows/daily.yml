@@ -2,8 +2,8 @@ name: Daily Strategy Run
 
 on:
   schedule:
-    - cron: "0 9 * * *"   # runs every day at 09:00 UTC
-  workflow_dispatch:       # allows manual runs
+    - cron: "0 8 * * *"   # runs every day at 09:00 UTC
+  workflow_dispatch:
 
 jobs:
   run-strategy:
@@ -13,22 +13,24 @@ jobs:
       - name: Checkout repo (fresh)
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0      # full history (safer for some git ops)
-          clean: true         # remove any previous build leftovers
+          fetch-depth: 0
+          clean: true
 
-      - name: Show commit that is running
-        run: |
-          echo "Running on commit:"
-          git log -1 --oneline
+      # NEW: pull back yesterday's open_trades.csv artifact if it exists
+      - name: Download previous open_trades
+        uses: actions/download-artifact@v4
+        with:
+          name: open_trades
+          path: .
+        continue-on-error: true  # first run: no artifact yet, so don't fail
+
+      - name: Show files in workspace (debug)
+        run: ls -la
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-
-      # optional: nuke pip cache if you're paranoid about staleness
-      # - name: Clear pip cache
-      #   run: pip cache purge || true
 
       - name: Install dependencies
         run: |
