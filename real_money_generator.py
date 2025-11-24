@@ -26,7 +26,7 @@ def send_email(subject, html_body):
     """Send an HTML email via Gmail SMTP."""
     msg = MIMEMultipart("alternative")
     msg["From"] = EMAIL_SENDER
-    msg["To"] = ", ".join(EMAIL_RECEIVERS)
+    msg["To"] = EMAIL_SENDER
     msg["Subject"] = subject
     msg.attach(MIMEText(html_body, "html"))
 
