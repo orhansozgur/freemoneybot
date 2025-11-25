@@ -243,7 +243,8 @@ lookback_vol = 20
 end_date = datetime.datetime.now()
 start_date = end_date - datetime.timedelta(days=365)
 interval = "1h"
-open_trades_file = Path("open_trades.csv")
+BASE_DIR = Path(__file__).resolve().parent
+open_trades_file = BASE_DIR / "open_trades.csv"
 trades_to_report = []
 
 params = {
@@ -370,7 +371,7 @@ for sym, p in params.items():
                 "peak_price": float(price),
             }
             open_trades = pl.concat([open_trades, pl.DataFrame([entry])])
-
+            save_open_trades(open_trades)
             aimed_exit = price * (1 + abs(drop_threshold) * target_recovery)
             trades_to_report.append({
                 "Ticker": sym,
@@ -434,6 +435,7 @@ for sym, p in params.items():
             )
 
             open_trades = open_trades.filter(pl.col("Ticker") != sym)
+            save_open_trades(open_trades)
         else:
             open_trades = open_trades.with_columns(
                 pl.when(pl.col("Ticker") == sym)
