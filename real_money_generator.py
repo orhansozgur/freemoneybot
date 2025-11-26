@@ -388,7 +388,9 @@ for sym, p in params.items():
     else:
         trade = existing.row(0, named=True)
         entry_price = trade["entry_price"]
-        entry_date = datetime.datetime.fromisoformat(trade["entry_date"])
+        entry_date = datetime.datetime.fromisoformat(
+            trade["entry_date"].strip().replace("\ufeff", "")
+        )
         alloc = trade["alloc"]
         peak_price = max(trade["peak_price"], price)
         change = (price / entry_price - 1)
