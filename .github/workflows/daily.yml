@@ -16,13 +16,13 @@ jobs:
           fetch-depth: 0
           clean: true
 
-      # NEW: pull back yesterday's open_trades.csv artifact if it exists
-      - name: Download previous open_trades
-        uses: actions/download-artifact@v4
-        with:
-          name: open_trades
-          path: .
-        continue-on-error: true  # first run: no artifact yet, so don't fail
+      # 🔴 REMOVE THIS WHOLE BLOCK:
+      # - name: Download previous open_trades
+      #   uses: actions/download-artifact@v4
+      #   with:
+      #     name: open_trades
+      #     path: .
+      #   continue-on-error: true
 
       - name: Show files in workspace (debug)
         run: ls -la
