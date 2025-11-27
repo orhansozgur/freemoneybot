@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 app = Flask(__name__)
 
 # TODO: put your raw CSV URL here
-TRADES_URL = "https://raw.githubusercontent.com/orhansozgur/freemoneybot/refs/heads/main/open_trades.csv?token=GHSAT0AAAAAADO44WJ7JCEYDJKZJWVVSRJG2JI3OPQ"
+TRADES_URL = "https://raw.githubusercontent.com/orhansozgur/freemoneybot/main/open_trades.csv"
 
 # Hard-coded S&P 500 start date (as you asked)
 SPX_ANCHOR_DATE = datetime(2025, 11, 21)
