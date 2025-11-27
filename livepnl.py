@@ -4,6 +4,7 @@ import yfinance as yf
 import matplotlib.pyplot as plt
 import io
 from datetime import datetime, timedelta
+import os
 
 app = Flask(__name__)
 
@@ -171,8 +172,6 @@ def index():
 def plot_png():
     img_bytes = make_plot_image()
     return send_file(io.BytesIO(img_bytes), mimetype="image/png")
-
-
 if __name__ == "__main__":
-    # Run on localhost:5000
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    port = int(os.environ.get("PORT", 5000))  # Render sets PORT
+    app.run(host="0.0.0.0", port=port, debug=False)
