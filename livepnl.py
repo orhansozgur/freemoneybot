@@ -47,10 +47,6 @@ def get_price_history(tickers, start_date: datetime, end_date: Optional[datetime
     if isinstance(close, pd.Series):
         close = close.to_frame(name=tickers if isinstance(tickers, str) else tickers[0])
 
-    # 🔧 KEY FIX: drop timezone from index so it's naive like your entry_date
-    if hasattr(close.index, "tz") and close.index.tz is not None:
-        close = close.copy()
-        close.index = close.index.tz_localize(None)
 
     return close
 
@@ -68,7 +64,7 @@ def compute_portfolio_pnl(trades: pd.DataFrame, prices: pd.DataFrame) -> pd.Seri
         entry_price = float(row["entry_price"])
         leverage = float(row["leverage"])
         alloc = float(row["alloc"])
-        entry_date = pd.to_datetime(row["entry_date"])
+        entry_date = row["entry_date"]
 
         if ticker not in prices.columns:
             continue
@@ -95,7 +91,7 @@ def compute_portfolio_pnl(trades: pd.DataFrame, prices: pd.DataFrame) -> pd.Seri
 
 def make_plot_image() -> bytes:
     trades = load_trades()
-    trades["entry_date"] = pd.to_datetime(trades["entry_date"])
+    trades["entry_date"] = pd.to_datetime(trades["entry_date"], utc=True)
 
     # fixed start date that never moves
     start_date = SPX_ANCHOR_DATE
