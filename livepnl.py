@@ -26,7 +26,6 @@ def load_trades() -> pd.DataFrame:
 
 
 from typing import Optional
-
 def get_price_history(tickers, start_date: datetime, end_date: Optional[datetime] = None) -> pd.DataFrame:
     if end_date is None:
         end_date = datetime.today() + timedelta(days=1)
@@ -35,12 +34,11 @@ def get_price_history(tickers, start_date: datetime, end_date: Optional[datetime
         tickers,
         start=start_date.strftime("%Y-%m-%d"),
         end=end_date.strftime("%Y-%m-%d"),
-        interval="1m",          # <--- minutely data
+        interval="1m",          # minutely data
         auto_adjust=True,
         progress=False,
     )
 
-    # yfinance shape handling
     if isinstance(data, pd.DataFrame) and "Close" in data.columns:
         close = data["Close"]
     else:
@@ -48,6 +46,11 @@ def get_price_history(tickers, start_date: datetime, end_date: Optional[datetime
 
     if isinstance(close, pd.Series):
         close = close.to_frame(name=tickers if isinstance(tickers, str) else tickers[0])
+
+    # 🔧 KEY FIX: drop timezone from index so it's naive like your entry_date
+    if hasattr(close.index, "tz") and close.index.tz is not None:
+        close = close.copy()
+        close.index = close.index.tz_localize(None)
 
     return close
 
