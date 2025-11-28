@@ -25,7 +25,9 @@ def load_trades() -> pd.DataFrame:
     return df
 
 
-def get_price_history(tickers, start_date: datetime, end_date: datetime | None = None) -> pd.DataFrame:
+from typing import Optional
+
+def get_price_history(tickers, start_date: datetime, end_date: Optional[datetime] = None) -> pd.DataFrame:
     if end_date is None:
         end_date = datetime.today() + timedelta(days=1)
 
@@ -33,8 +35,9 @@ def get_price_history(tickers, start_date: datetime, end_date: datetime | None =
         tickers,
         start=start_date.strftime("%Y-%m-%d"),
         end=end_date.strftime("%Y-%m-%d"),
+        interval="1m",          # <--- minutely data
         auto_adjust=True,
-        progress=False
+        progress=False,
     )
 
     # yfinance shape handling
@@ -43,7 +46,6 @@ def get_price_history(tickers, start_date: datetime, end_date: datetime | None =
     else:
         close = data
 
-    # If single ticker, may be a Series
     if isinstance(close, pd.Series):
         close = close.to_frame(name=tickers if isinstance(tickers, str) else tickers[0])
 
@@ -53,9 +55,8 @@ def get_price_history(tickers, start_date: datetime, end_date: datetime | None =
 def compute_portfolio_pnl(trades: pd.DataFrame, prices: pd.DataFrame) -> pd.Series:
     """
     PnL(t) = sum_over_trades( qty * (price_t - entry_price) )
-    where qty is derived from leverage and alloc:
-        qty = (leverage * alloc) / entry_price
-    Assumes all trades are long.
+    qty = (leverage * alloc) / entry_price
+    PnL is 0 before each trade's entry_date.
     """
     pnl_total = None
 
@@ -64,14 +65,18 @@ def compute_portfolio_pnl(trades: pd.DataFrame, prices: pd.DataFrame) -> pd.Seri
         entry_price = float(row["entry_price"])
         leverage = float(row["leverage"])
         alloc = float(row["alloc"])
+        entry_date = pd.to_datetime(row["entry_date"])
 
         if ticker not in prices.columns:
             continue
 
-        qty = (leverage * alloc) / entry_price  # number of index units
+        qty = (leverage * alloc) / entry_price
         px_series = prices[ticker]
 
+        # raw PnL
         trade_pnl = qty * (px_series - entry_price)
+        # zero before entry date
+        trade_pnl = trade_pnl.where(trade_pnl.index >= entry_date, 0.0)
 
         if pnl_total is None:
             pnl_total = trade_pnl
@@ -84,48 +89,49 @@ def compute_portfolio_pnl(trades: pd.DataFrame, prices: pd.DataFrame) -> pd.Seri
     return pnl_total
 
 
+
 def make_plot_image() -> bytes:
     trades = load_trades()
-
-    # Parse entry dates and find earliest
     trades["entry_date"] = pd.to_datetime(trades["entry_date"])
-    earliest_entry = trades["entry_date"].min()
 
-    # Start date is the later of earliest entry and SPX anchor date (you wanted SPX from 2025-11-21)
-    start_date = max(earliest_entry, SPX_ANCHOR_DATE)
+    # fixed start date that never moves
+    start_date = SPX_ANCHOR_DATE
 
-    # Get price history for all trade tickers
+    # price history for all trade tickers from fixed start date
     tickers = trades["Ticker"].unique().tolist()
     prices = get_price_history(tickers, start_date=start_date)
 
-    # Compute portfolio PnL over time
+    # strategy PnL
     portfolio_pnl = compute_portfolio_pnl(trades, prices)
 
-    # ---- S&P 500 flat line ----
-    # Get SPX level on SPX_ANCHOR_DATE and keep it constant (no movement)
-    # If data before 2025-11-21 exists, we still anchor on that date.
-    spx_prices = get_price_history("^GSPC", start_date=SPX_ANCHOR_DATE)
-    if spx_prices.shape[0] == 0:
-        # Fallback: just pick an arbitrary level if no data
-        spx_level0 = 5000.0
-    else:
-        spx_level0 = spx_prices.iloc[0, 0]
+    # ------- Benchmark: S&P 500 PnL with same capital --------
+    # 1) get S&P prices from same fixed start date
+    spx_prices = get_price_history("^GSPC", start_date=start_date)
+    spx = spx_prices["^GSPC"]
 
-    # Create a flat SPX series over the same index as portfolio PnL
-    spx_flat = pd.Series(spx_level0, index=portfolio_pnl.index)
+    # align to strategy PnL index (forward-fill to handle missing minutes)
+    spx = spx.reindex(portfolio_pnl.index, method="ffill")
 
-    # ---- Plot ----
+    # 2) total initial capital (unlevered) from your trades
+    total_alloc = trades["alloc"].astype(float).sum()
+
+    # 3) pretend we invest that into S&P at start_date
+    spx_start = spx.iloc[0]
+    spx_qty = total_alloc / spx_start
+
+    # 4) benchmark PnL over time
+    spx_pnl = spx_qty * (spx - spx_start)
+
+    # --------------- Plot both PnLs ----------------
     fig, ax1 = plt.subplots(figsize=(8, 4))
 
-    # Portfolio PnL
-    ax1.plot(portfolio_pnl.index, portfolio_pnl.values, label="Portfolio PnL")
-    ax1.set_ylabel("PnL (currency)")
-    ax1.set_xlabel("Date")
+    ax1.plot(portfolio_pnl.index, portfolio_pnl.values, label="Strategy PnL")
+    ax1.plot(spx_pnl.index, spx_pnl.values, linestyle="--",
+             label=f"S&P 500 PnL (same capital since {SPX_ANCHOR_DATE.date()})")
 
-    # Flat SPX line on secondary axis or same, your choice
-    ax1.plot(spx_flat.index, spx_flat.values, linestyle="--", label=f"S&P 500 (flat from {SPX_ANCHOR_DATE.date()})")
-
-    ax1.set_title("Portfolio PnL vs Flat S&P 500")
+    ax1.set_ylabel("PnL")
+    ax1.set_xlabel("Time")
+    ax1.set_title("Strategy PnL vs S&P 500 PnL (same capital)")
     ax1.legend()
     fig.tight_layout()
 
@@ -135,6 +141,7 @@ def make_plot_image() -> bytes:
     plt.close(fig)
 
     return buf.getvalue()
+
 
 
 # ---- ROUTES ----
