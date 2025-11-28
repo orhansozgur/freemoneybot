@@ -1,23 +1,21 @@
-from flask import Flask, send_file, render_template_string
+from flask import Flask, jsonify, render_template_string
 import pandas as pd
 import yfinance as yf
-import matplotlib.pyplot as plt
-import io
 from datetime import datetime, timedelta
+from typing import Optional
 import os
 
 app = Flask(__name__)
 
-# TODO: put your raw CSV URL here
+# Your CSV on GitHub (this stays the same)
 TRADES_URL = "https://raw.githubusercontent.com/orhansozgur/freemoneybot/main/open_trades.csv"
 
-# Hard-coded S&P 500 start date (as you asked)
+# Fixed anchor date if you want a stable history start
 SPX_ANCHOR_DATE = datetime(2025, 11, 21)
 
 
 def load_trades() -> pd.DataFrame:
     df = pd.read_csv(TRADES_URL)
-    # Ensure expected columns
     expected = {"Ticker", "entry_date", "entry_price", "leverage", "alloc", "peak_price"}
     missing = expected.difference(df.columns)
     if missing:
@@ -25,8 +23,11 @@ def load_trades() -> pd.DataFrame:
     return df
 
 
-from typing import Optional
-def get_price_history(tickers, start_date: datetime, end_date: Optional[datetime] = None) -> pd.DataFrame:
+def get_price_history(
+    tickers,
+    start_date: datetime,
+    end_date: Optional[datetime] = None,
+) -> pd.DataFrame:
     if end_date is None:
         end_date = datetime.today() + timedelta(days=1)
 
@@ -34,7 +35,7 @@ def get_price_history(tickers, start_date: datetime, end_date: Optional[datetime
         tickers,
         start=start_date.strftime("%Y-%m-%d"),
         end=end_date.strftime("%Y-%m-%d"),
-        interval="1m",          # minutely data
+        interval="1m",          # minutely data → chart moves every minute
         auto_adjust=True,
         progress=False,
     )
@@ -47,42 +48,8 @@ def get_price_history(tickers, start_date: datetime, end_date: Optional[datetime
     if isinstance(close, pd.Series):
         close = close.to_frame(name=tickers if isinstance(tickers, str) else tickers[0])
 
-
     return close
-def get_spx_series(start_date: datetime) -> pd.Series:
-    """
-    Get S&P 500 prices starting from start_date.
-    Try 1-minute data first; if it's empty, fall back to daily.
-    Returns a Series indexed by datetime.
-    """
-    # first try 1-minute (same as your strategy)
-    spx_df = get_price_history("^GSPC", start_date=start_date)
 
-    if spx_df is not None and not spx_df.empty:
-        # yfinance with our get_price_history puts '^GSPC' as a column name
-        if "^GSPC" in spx_df.columns:
-            spx = spx_df["^GSPC"]
-        else:
-            # just take the first column as a fallback
-            spx = spx_df.iloc[:, 0]
-        return spx
-
-    # fallback: daily data (always available)
-    daily = yf.download(
-        "^GSPC",
-        start=start_date.strftime("%Y-%m-%d"),
-        auto_adjust=True,
-        progress=False,
-    )
-
-    if isinstance(daily, pd.DataFrame) and "Close" in daily.columns:
-        spx = daily["Close"]
-    else:
-        # last fallback: just make a flat dummy series so code doesn't crash
-        idx = pd.date_range(start=start_date, end=datetime.today(), freq="D")
-        spx = pd.Series(5000.0, index=idx)
-
-    return spx
 
 def compute_portfolio_pnl(trades: pd.DataFrame, prices: pd.DataFrame) -> pd.Series:
     """
@@ -97,7 +64,7 @@ def compute_portfolio_pnl(trades: pd.DataFrame, prices: pd.DataFrame) -> pd.Seri
         entry_price = float(row["entry_price"])
         leverage = float(row["leverage"])
         alloc = float(row["alloc"])
-        entry_date = row["entry_date"]
+        entry_date = row["entry_date"]  # already a UTC Timestamp
 
         if ticker not in prices.columns:
             continue
@@ -105,7 +72,6 @@ def compute_portfolio_pnl(trades: pd.DataFrame, prices: pd.DataFrame) -> pd.Seri
         qty = (leverage * alloc) / entry_price
         px_series = prices[ticker]
 
-        # raw PnL
         trade_pnl = qty * (px_series - entry_price)
         # zero before entry date
         trade_pnl = trade_pnl.where(trade_pnl.index >= entry_date, 0.0)
@@ -121,94 +87,184 @@ def compute_portfolio_pnl(trades: pd.DataFrame, prices: pd.DataFrame) -> pd.Seri
     return pnl_total
 
 
-
-def make_plot_image() -> bytes:
+def compute_pnl_series() -> pd.Series:
+    """Helper: load trades, load prices, return cleaned PnL series."""
     trades = load_trades()
+    # make entry_date timezone-aware UTC to match yfinance
     trades["entry_date"] = pd.to_datetime(trades["entry_date"], utc=True)
 
     # fixed start date that never moves
     start_date = SPX_ANCHOR_DATE
 
-    # price history for all trade tickers from fixed start date
     tickers = trades["Ticker"].unique().tolist()
     prices = get_price_history(tickers, start_date=start_date)
 
-    # strategy PnL
     portfolio_pnl = compute_portfolio_pnl(trades, prices)
-
-    # ------- Benchmark: S&P 500 PnL with same capital --------
-    # 1) get S&P prices from same fixed start date
-    spx = get_spx_series(start_date)
-
-    # 2) align S&P prices to the same index as strategy PnL (forward fill)
-    spx = spx.reindex(portfolio_pnl.index, method="ffill")
-
-    # 3) pretend we invest exactly 10M into S&P at start_date
-    initial_capital = 10_000_000.0  # 10M benchmark
-    spx_start = spx.iloc[0]
-    spx_qty = initial_capital / spx_start
-
-    # 4) benchmark PnL over time
-    spx_pnl = spx_qty * (spx - spx_start)
-    
-
-    # --------------- Plot both PnLs ----------------
-    fig, ax1 = plt.subplots(figsize=(8, 4))
-
-    ax1.plot(portfolio_pnl.index, portfolio_pnl.values, label="Strategy PnL")
-    ax1.plot(spx_pnl.index, spx_pnl.values, linestyle="--",
-             label=f"S&P 500 PnL")
-
-    ax1.set_ylabel("PnL")
-    ax1.set_xlabel("Time")
-    ax1.set_title("Strategy PnL vs S&P 500 PnL")
-    ax1.legend()
-    fig.tight_layout()
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=120)
-    buf.seek(0)
-    plt.close(fig)
-
-    return buf.getvalue()
+    # drop NaN rows, sort index
+    portfolio_pnl = portfolio_pnl.dropna().sort_index()
+    return portfolio_pnl
 
 
-
-# ---- ROUTES ----
+# ---------------- HTML (Chart.js front-end) ----------------
 
 HTML_TEMPLATE = """
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Live PnL vs Flat S&P 500</title>
-  <!-- Auto-refresh every 60 seconds -->
-  <meta http-equiv="refresh" content="60">
+  <title>Live Strategy PnL</title>
   <style>
-    body { font-family: sans-serif; text-align: center; background: #111; color: #eee; }
-    img { max-width: 95vw; height: auto; border: 1px solid #444; margin-top: 20px; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      text-align: center;
+      background: #050505;
+      color: #f5f5f5;
+      margin: 0;
+      padding: 20px;
+    }
+    #container {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    canvas {
+      width: 100%;
+      max-height: 540px;
+    }
+    #status {
+      margin-top: 8px;
+      font-size: 0.9rem;
+      color: #aaaaaa;
+    }
   </style>
+  <!-- Chart.js + time adapter for nice time axis -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/luxon@^3"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@^1"></script>
 </head>
 <body>
-  <h1>Live PnL vs Flat S&P 500</h1>
-  <p>Auto-refreshes every 60 seconds.</p>
-  <img src="/plot.png?ts={{ timestamp }}" alt="PnL Plot">
+  <div id="container">
+    <h1>Live Strategy PnL</h1>
+    <p>Hover to see time &amp; PnL. Updates automatically.</p>
+    <canvas id="pnlChart"></canvas>
+    <div id="status">Loading…</div>
+  </div>
+
+  <script>
+    let chart = null;
+
+    async function fetchPnl() {
+      const res = await fetch('/data.json?ts=' + Date.now());
+      if (!res.ok) {
+        throw new Error('HTTP ' + res.status);
+      }
+      return res.json();
+    }
+
+    async function updateChart() {
+      try {
+        const data = await fetchPnl();
+        const labels = data.timestamps;  // ISO strings
+        const pnl = data.pnl;
+
+        const ctx = document.getElementById('pnlChart').getContext('2d');
+
+        if (!chart) {
+          chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+              labels: labels,
+              datasets: [{
+                label: 'Strategy PnL',
+                data: pnl,
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.1,
+              }]
+            },
+            options: {
+              responsive: true,
+              interaction: {
+                mode: 'index',
+                intersect: false,
+              },
+              plugins: {
+                legend: {
+                  display: true,
+                },
+                tooltip: {
+                  callbacks: {
+                    // Show "PnL: £x.xx" on hover
+                    label: function(ctx) {
+                      const v = ctx.parsed.y;
+                      if (v == null) return '';
+                      return 'PnL: ' + v.toFixed(2);
+                    }
+                  }
+                },
+              },
+              scales: {
+                x: {
+                  type: 'time',
+                  time: {
+                    unit: 'minute',
+                    displayFormats: {
+                      minute: 'HH:mm',
+                      hour: 'HH:mm',
+                    }
+                  },
+                  ticks: {
+                    maxRotation: 0,
+                  }
+                },
+                y: {
+                  ticks: {
+                    callback: function(value) {
+                      return value.toLocaleString();
+                    }
+                  }
+                }
+              }
+            }
+          });
+        } else {
+          chart.data.labels = labels;
+          chart.data.datasets[0].data = pnl;
+          chart.update();
+        }
+
+        document.getElementById('status').textContent =
+          'Last update: ' + new Date().toLocaleTimeString();
+      } catch (e) {
+        document.getElementById('status').textContent = 'Error: ' + e.message;
+      }
+    }
+
+    // Initial load
+    updateChart();
+    // Refresh every 60 seconds (tweak if you want more/less)
+    setInterval(updateChart, 60000);
+  </script>
 </body>
 </html>
 """
 
 
+# ---------------- ROUTES ----------------
+
 @app.route("/")
 def index():
-    # timestamp query param busts browser cache so it really reloads
-    ts = datetime.utcnow().timestamp()
-    return render_template_string(HTML_TEMPLATE, timestamp=ts)
+    return render_template_string(HTML_TEMPLATE)
 
 
-@app.route("/plot.png")
-def plot_png():
-    img_bytes = make_plot_image()
-    return send_file(io.BytesIO(img_bytes), mimetype="image/png")
+@app.route("/data.json")
+def data_json():
+    pnl = compute_pnl_series()
+    return jsonify({
+        "timestamps": [ts.isoformat() for ts in pnl.index],
+        "pnl": pnl.tolist(),
+    })
+
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # Render sets PORT
+    port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
