@@ -49,7 +49,40 @@ def get_price_history(tickers, start_date: datetime, end_date: Optional[datetime
 
 
     return close
+def get_spx_series(start_date: datetime) -> pd.Series:
+    """
+    Get S&P 500 prices starting from start_date.
+    Try 1-minute data first; if it's empty, fall back to daily.
+    Returns a Series indexed by datetime.
+    """
+    # first try 1-minute (same as your strategy)
+    spx_df = get_price_history("^GSPC", start_date=start_date)
 
+    if spx_df is not None and not spx_df.empty:
+        # yfinance with our get_price_history puts '^GSPC' as a column name
+        if "^GSPC" in spx_df.columns:
+            spx = spx_df["^GSPC"]
+        else:
+            # just take the first column as a fallback
+            spx = spx_df.iloc[:, 0]
+        return spx
+
+    # fallback: daily data (always available)
+    daily = yf.download(
+        "^GSPC",
+        start=start_date.strftime("%Y-%m-%d"),
+        auto_adjust=True,
+        progress=False,
+    )
+
+    if isinstance(daily, pd.DataFrame) and "Close" in daily.columns:
+        spx = daily["Close"]
+    else:
+        # last fallback: just make a flat dummy series so code doesn't crash
+        idx = pd.date_range(start=start_date, end=datetime.today(), freq="D")
+        spx = pd.Series(5000.0, index=idx)
+
+    return spx
 
 def compute_portfolio_pnl(trades: pd.DataFrame, prices: pd.DataFrame) -> pd.Series:
     """
@@ -105,32 +138,30 @@ def make_plot_image() -> bytes:
 
     # ------- Benchmark: S&P 500 PnL with same capital --------
     # 1) get S&P prices from same fixed start date
-    spx_prices = get_price_history("^GSPC", start_date=start_date)
-    spx = spx_prices["^GSPC"]
+    spx = get_spx_series(start_date)
 
-    # align to strategy PnL index (forward-fill to handle missing minutes)
+    # 2) align S&P prices to the same index as strategy PnL (forward fill)
     spx = spx.reindex(portfolio_pnl.index, method="ffill")
 
-    # 2) total initial capital (unlevered) from your trades
-    total_alloc = trades["alloc"].astype(float).sum()
-
-    # 3) pretend we invest that into S&P at start_date
+    # 3) pretend we invest exactly 10M into S&P at start_date
+    initial_capital = 10_000_000.0  # 10M benchmark
     spx_start = spx.iloc[0]
-    spx_qty = total_alloc / spx_start
+    spx_qty = initial_capital / spx_start
 
     # 4) benchmark PnL over time
     spx_pnl = spx_qty * (spx - spx_start)
+    
 
     # --------------- Plot both PnLs ----------------
     fig, ax1 = plt.subplots(figsize=(8, 4))
 
     ax1.plot(portfolio_pnl.index, portfolio_pnl.values, label="Strategy PnL")
     ax1.plot(spx_pnl.index, spx_pnl.values, linestyle="--",
-             label=f"S&P 500 PnL (same capital since {SPX_ANCHOR_DATE.date()})")
+             label=f"S&P 500 PnL")
 
     ax1.set_ylabel("PnL")
     ax1.set_xlabel("Time")
-    ax1.set_title("Strategy PnL vs S&P 500 PnL (same capital)")
+    ax1.set_title("Strategy PnL vs S&P 500 PnL")
     ax1.legend()
     fig.tight_layout()
 
