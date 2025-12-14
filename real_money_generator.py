@@ -13,7 +13,7 @@ import os
 # ---------------- EMAIL SETTINGS ----------------
 EMAIL_SENDER = "orhansozgur@gmail.com"
 EMAIL_PASSWORD = os.getenv("GMAIL_APP_PASS")
-EMAIL_RECEIVERS = ["orhansozgur@gmail.com", "eminozgur@gmail.com", "pasagokdemir3103@gmail.com","fkimbugwe@icloud.com","sertoglualp@gmail.com"]
+EMAIL_RECEIVERS = ["orhansozgur@gmail.com", "eminozgur@gmail.com", "pasagokdemir3103@gmail.com","fkimbugwe@icloud.com","sertoglualp@gmail.com", "isaacchittilappily@gmail.com"]
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
@@ -471,11 +471,11 @@ if trades_to_report:
     html_body += make_trade_actions_html(trades_to_report)
 else:
     html_body += "<p>✅ No new trades today — markets stable.</p>"
-
+html_body += make_open_trades_html(open_trades)
 # add market and open-trade sections
 if market_summary:
     html_body += make_market_html(market_summary, params)
-html_body += make_open_trades_html(open_trades)
+
 html_body += f"<p style='font-size:0.8em;color:#666;'>Report generated {datetime.datetime.now():%Y-%m-%d %H:%M UTC}</p>"
 html_body += "</body></html>"
 
