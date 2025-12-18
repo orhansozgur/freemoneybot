@@ -13,7 +13,7 @@ import os
 # ---------------- EMAIL SETTINGS ----------------
 EMAIL_SENDER = "orhansozgur@gmail.com"
 EMAIL_PASSWORD = os.getenv("GMAIL_APP_PASS")
-EMAIL_RECEIVERS = ["orhansozgur@gmail.com", "eminozgur@gmail.com", "pasagokdemir3103@gmail.com","fkimbugwe@icloud.com","sertoglualp@gmail.com", "isaacchittilappily@gmail.com"]
+EMAIL_RECEIVERS = ["orhansozgur@gmail.com", "eminozgur@gmail.com", "pasagokdemir3103@gmail.com","fkimbugwe@icloud.com","sertoglualp@gmail.com", "isaac.chittilappily@gmail.com", "arjunkshirsagar.247@gmail.com"]
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
