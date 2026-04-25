@@ -9,6 +9,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import os
+import json
 
 # ---------------- EMAIL SETTINGS ----------------
 EMAIL_SENDER = "orhansozgur@gmail.com"
@@ -149,7 +150,7 @@ def make_open_trades_html(open_trades):
             <td>{entry:,.2f}</td>
             <td>{cur_price:,.2f}</td>
             <td>{lev}</td>
-            <td>{alloc:,}</td>
+            <td>{alloc:,.2f}</td>
             <td style="color:{color};">{pnl_val:,.0f} ({change*lev*100:+.2f}%)</td>
           </tr>""")
 
@@ -245,6 +246,10 @@ start_date = end_date - datetime.timedelta(days=365)
 interval = "1h"
 BASE_DIR = Path(__file__).resolve().parent
 open_trades_file = BASE_DIR / "open_trades.csv"
+portfolio_state_file = BASE_DIR / "portfolio_state.json"
+INITIAL_CAPITAL = float(os.getenv("INITIAL_CAPITAL", "10000000"))
+ALLOC_FRACTION = 0.10
+MIN_ALLOC = 1.0
 trades_to_report = []
 
 params = {
@@ -267,26 +272,98 @@ params = {
 }
 
 # ---------------- HELPERS ----------------
-def load_open_trades():
-    if open_trades_file.exists():
-        df = pl.read_csv(open_trades_file)
-        if df.height > 0:
-            return df
-    # define explicit schema to avoid Null dtype
+OPEN_TRADE_SCHEMA = {
+    "Ticker": pl.Utf8,
+    "entry_date": pl.Utf8,
+    "entry_price": pl.Float64,
+    "leverage": pl.Int64,
+    "alloc": pl.Float64,
+    "peak_price": pl.Float64,
+}
+
+
+def empty_open_trades():
     return pl.DataFrame(
-        {
-            "Ticker": pl.Series([], dtype=pl.Utf8),
-            "entry_date": pl.Series([], dtype=pl.Utf8),
-            "entry_price": pl.Series([], dtype=pl.Float64),
-            "leverage": pl.Series([], dtype=pl.Int64),
-            "alloc": pl.Series([], dtype=pl.Int64),
-            "peak_price": pl.Series([], dtype=pl.Float64),
-        }
+        {col: pl.Series([], dtype=dtype) for col, dtype in OPEN_TRADE_SCHEMA.items()}
     )
 
 
+def normalize_open_trades(df: pl.DataFrame) -> pl.DataFrame:
+    if df.height == 0:
+        return empty_open_trades()
+
+    defaults = {
+        "Ticker": "",
+        "entry_date": "",
+        "entry_price": 0.0,
+        "leverage": 1,
+        "alloc": 0.0,
+        "peak_price": 0.0,
+    }
+    for col, dtype in OPEN_TRADE_SCHEMA.items():
+        if col not in df.columns:
+            df = df.with_columns(pl.lit(defaults[col]).cast(dtype).alias(col))
+
+    df = df.select(list(OPEN_TRADE_SCHEMA.keys()))
+    df = df.with_columns(
+        [
+            pl.col("Ticker").cast(pl.Utf8, strict=False).fill_null("").str.strip_chars(),
+            pl.col("entry_date")
+            .cast(pl.Utf8, strict=False)
+            .fill_null("")
+            .str.strip_chars(),
+            pl.col("entry_price").cast(pl.Float64, strict=False).fill_null(0.0),
+            pl.col("leverage").cast(pl.Int64, strict=False).fill_null(1),
+            pl.col("alloc").cast(pl.Float64, strict=False).fill_null(0.0),
+            pl.col("peak_price").cast(pl.Float64, strict=False).fill_null(0.0),
+        ]
+    )
+    df = df.with_columns(
+        pl.when(pl.col("peak_price") <= 0)
+        .then(pl.col("entry_price"))
+        .otherwise(pl.col("peak_price"))
+        .alias("peak_price")
+    )
+    return df.filter(pl.col("Ticker") != "")
+
+
+def load_open_trades():
+    if open_trades_file.exists():
+        try:
+            return normalize_open_trades(pl.read_csv(open_trades_file))
+        except Exception as e:
+            print(f"⚠️ Failed to read open trades CSV, starting empty: {e}")
+    return empty_open_trades()
+
+
 def save_open_trades(df):
-    df.write_csv(open_trades_file)
+    open_trades_file.parent.mkdir(parents=True, exist_ok=True)
+    normalize_open_trades(df).write_csv(open_trades_file)
+
+
+def load_available_cash(open_trades: pl.DataFrame) -> float:
+    allocated_capital = float(open_trades["alloc"].sum()) if open_trades.height > 0 else 0.0
+    fallback_cash = max(INITIAL_CAPITAL - allocated_capital, 0.0)
+
+    if portfolio_state_file.exists():
+        try:
+            payload = json.loads(portfolio_state_file.read_text())
+            available_cash = float(payload.get("available_cash", fallback_cash))
+            if np.isfinite(available_cash) and available_cash >= 0:
+                return available_cash
+        except Exception as e:
+            print(f"⚠️ Failed to read portfolio state, using fallback cash: {e}")
+
+    return fallback_cash
+
+
+def save_available_cash(available_cash: float):
+    portfolio_state_file.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "available_cash": round(float(max(available_cash, 0.0)), 2),
+        "updated_at_utc": datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    portfolio_state_file.write_text(json.dumps(payload, indent=2))
 
 def get_vol_and_dd(df):
     close = df["Close"].to_numpy()
@@ -300,6 +377,7 @@ def get_vol_and_dd(df):
 
 # ---------------- MAIN LOOP ----------------
 open_trades = load_open_trades()
+available_cash = load_available_cash(open_trades)
 signals = []
 market_summary = []
 
@@ -361,15 +439,20 @@ for sym, p in params.items():
         # Enter only when the current drawdown is below threshold.
         # Using the minimum drawdown over the window can trigger late buys after recovery.
         if current_dd_val <= drop_threshold and calm_val and price < roll_peak:
+            alloc = round(min(available_cash * ALLOC_FRACTION, available_cash), 2)
+            if alloc < MIN_ALLOC:
+                continue
+
             entry = {
                 "Ticker": sym,
                 "entry_date": today.strftime("%Y-%m-%d %H:%M"),
                 "entry_price": float(price),
                 "leverage": leverage,
-                "alloc": 1_000_000,
+                "alloc": float(alloc),
                 "peak_price": float(price),
             }
             open_trades = pl.concat([open_trades, pl.DataFrame([entry])])
+            available_cash = max(available_cash - alloc, 0.0)
             save_open_trades(open_trades)
             aimed_exit = price * (1 + abs(drop_threshold) * target_recovery)
             trades_to_report.append({
@@ -380,10 +463,14 @@ for sym, p in params.items():
                 "Target Exit": aimed_exit,
                 "Target Recovery": f"{target_recovery*100:.1f}%",
                 "Leverage": leverage,
+                "Alloc (£)": alloc,
                 "Stop Loss": f"{stop_loss*100:.1f}%",
                 "Reason": "Buy the dip",
             })
-            signals.append(f"🟢 {sym}: ENTER trade at {price:.2f} ({today.date()})")
+            signals.append(
+                f"🟢 {sym}: ENTER trade at {price:.2f} ({today.date()}) | "
+                f"Alloc £{alloc:,.2f} | Cash left £{available_cash:,.2f}"
+            )
     else:
         trade = existing.row(0, named=True)
         entry_price = trade["entry_price"]
@@ -411,6 +498,8 @@ for sym, p in params.items():
             pnl_pct = change * leverage * 100
             pnl_abs = pnl
             duration_hours = (today - entry_date).total_seconds() / 3600
+            released_cash = float(alloc + pnl_abs)
+            available_cash = max(available_cash + released_cash, 0.0)
 
             # determine human reason
             if "stop" in reason:
@@ -426,13 +515,15 @@ for sym, p in params.items():
                 "Target Exit": price,
                 "PnL (£)": round(pnl_abs, 2),
                 "PnL (%)": round(pnl_pct, 2),
+                "Cash Released (£)": round(released_cash, 2),
                 "Reason": reason_clean,
             })
 
             signals.append(
                 f"🔴 {sym}: EXIT trade ({reason_clean})\n"
                 f"    PnL = {'+' if pnl_abs >= 0 else ''}£{pnl_abs:,.0f}  "
-                f"({pnl_pct:+.2f}%) after {duration_hours:.0f} hours"
+                f"({pnl_pct:+.2f}%) after {duration_hours:.0f} hours\n"
+                f"    Cash now £{available_cash:,.2f}"
             )
 
             open_trades = open_trades.filter(pl.col("Ticker") != sym)
@@ -447,6 +538,7 @@ for sym, p in params.items():
 
 # ---------------- SAVE + OUTPUT ----------------
 save_open_trades(open_trades)
+save_available_cash(available_cash)
 
 
 
@@ -464,6 +556,13 @@ else:
 
 html_body = "<html><head>" + HTML_STYLE + "</head><body>"
 html_body += f"<h2>{subject}</h2>"
+allocated_capital = float(open_trades["alloc"].sum()) if open_trades.height > 0 else 0.0
+total_capital = available_cash + allocated_capital
+html_body += (
+    f"<p><strong>Available Cash:</strong> £{available_cash:,.2f} | "
+    f"<strong>Allocated:</strong> £{allocated_capital:,.2f} | "
+    f"<strong>Total Capital:</strong> £{total_capital:,.2f}</p>"
+)
 
 # Trade actions summary
 if trades_to_report:
