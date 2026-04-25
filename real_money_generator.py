@@ -356,12 +356,11 @@ for sym, p in params.items():
     existing = open_trades.filter(pl.col("Ticker") == sym)
     if existing.height == 0:
         calm_val = bool(last["vol"].item() <= vol_mean * vol_mult)
-        recent_dd_val = df.tail(160)["drawdown"].min()
-        if isinstance(recent_dd_val, pl.Series):
-            recent_dd_val = recent_dd_val.item()
+        current_dd_val = float(current_dd)
 
-        # now both are plain scalars
-        if recent_dd_val <= drop_threshold and calm_val:
+        # Enter only when the current drawdown is below threshold.
+        # Using the minimum drawdown over the window can trigger late buys after recovery.
+        if current_dd_val <= drop_threshold and calm_val and price < roll_peak:
             entry = {
                 "Ticker": sym,
                 "entry_date": today.strftime("%Y-%m-%d %H:%M"),
