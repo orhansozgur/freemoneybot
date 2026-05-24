@@ -393,11 +393,16 @@ for sym, p in params.items():
     )
     if data.empty:
         continue
-    if "Datetime" in data.columns:
-        data.rename(columns={"Datetime": "Date"}, inplace=True)
     if isinstance(data.columns, pd.MultiIndex):
         data.columns = [c[0] for c in data.columns]
-    df = pl.from_pandas(data.reset_index()).rename({"Datetime": "Date"}).select(["Date", "Close"]).drop_nulls()
+
+    data = data.reset_index()
+    if "Datetime" in data.columns:
+        data.rename(columns={"Datetime": "Date"}, inplace=True)
+    elif "Date" not in data.columns and "index" in data.columns:
+        data.rename(columns={"index": "Date"}, inplace=True)
+
+    df = pl.from_pandas(data).select(["Date", "Close"]).drop_nulls()
     drawdown, vol, vol_mean = get_vol_and_dd(df)
     df = df.with_columns([
         pl.Series("drawdown", drawdown),
